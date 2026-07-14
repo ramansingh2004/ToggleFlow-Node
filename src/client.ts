@@ -23,6 +23,9 @@ const DEFAULT_TIMEOUT_MS = 3_000;
 const DEFAULT_CACHE_TTL_MS = 30_000;
 const DEFAULT_STALE_TTL_MS = 5 * 60_000;
 const DEFAULT_MAX_CACHE_ENTRIES = 1_000;
+const DEFAULT_MAX_RETRIES = 2;
+const DEFAULT_RETRY_BASE_DELAY_MS = 100;
+const DEFAULT_RETRY_MAX_DELAY_MS = 5_000;
 
 export class ToggleFlow {
   private readonly transport: HttpTransport;
@@ -104,12 +107,45 @@ export class ToggleFlow {
       maxCacheEntries
     );
 
+    const maxRetries =
+  validateNonNegativeInteger(
+    options.maxRetries ??
+      DEFAULT_MAX_RETRIES,
+    'maxRetries'
+  );
+
+const retryBaseDelayMs =
+  validateNonNegativeNumber(
+    options.retryBaseDelayMs ??
+      DEFAULT_RETRY_BASE_DELAY_MS,
+    'retryBaseDelayMs'
+  );
+
+const retryMaxDelayMs =
+  validateNonNegativeNumber(
+    options.retryMaxDelayMs ??
+      DEFAULT_RETRY_MAX_DELAY_MS,
+    'retryMaxDelayMs'
+  );
+
+if (retryMaxDelayMs < retryBaseDelayMs) {
+  throw new ToggleFlowError(
+    'retryMaxDelayMs must be greater than or equal to retryBaseDelayMs.',
+    {
+      code: 'INVALID_CONFIGURATION',
+    }
+  );
+}
+
     this.transport = new HttpTransport({
-      apiKey,
-      baseUrl,
-      timeoutMs,
-      fetchImplementation,
-    });
+  apiKey,
+  baseUrl,
+  timeoutMs,
+  fetchImplementation,
+  maxRetries,
+  retryBaseDelayMs,
+  retryMaxDelayMs,
+});
   }
 
   async getAllFlags(
@@ -467,6 +503,25 @@ function validatePositiveInteger(
   ) {
     throw new ToggleFlowError(
       `${name} must be a positive integer.`,
+      {
+        code: 'INVALID_CONFIGURATION',
+      }
+    );
+  }
+
+  return value;
+}
+
+function validateNonNegativeInteger(
+  value: number,
+  name: string
+): number {
+  if (
+    !Number.isInteger(value) ||
+    value < 0
+  ) {
+    throw new ToggleFlowError(
+      `${name} must be zero or a positive integer.`,
       {
         code: 'INVALID_CONFIGURATION',
       }

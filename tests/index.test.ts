@@ -30,6 +30,7 @@ function createClient(
     apiKey: 'tf_test_example',
     baseUrl: 'http://localhost:5000/api/v1',
     fetchImplementation,
+    maxRetries: 0,
     ...(onError ? { onError } : {}),
   });
 }

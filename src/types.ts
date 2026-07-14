@@ -83,6 +83,27 @@ export interface ToggleFlowOptions {
    */
   maxCacheEntries?: number;
 
+  /**
+ * Number of retries after the initial request.
+ *
+ * @default 2
+ */
+maxRetries?: number;
+
+/**
+ * Initial exponential backoff delay.
+ *
+ * @default 100
+ */
+retryBaseDelayMs?: number;
+
+/**
+ * Maximum retry delay, including Retry-After.
+ *
+ * @default 5000
+ */
+retryMaxDelayMs?: number;
+
   fetchImplementation?: typeof globalThis.fetch;
 
   onError?: (error: ToggleFlowError) => void;

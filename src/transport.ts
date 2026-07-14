@@ -14,6 +14,9 @@ interface TransportOptions {
   baseUrl: string;
   timeoutMs: number;
   fetchImplementation: typeof fetch;
+  maxRetries: number;
+  retryBaseDelayMs: number;
+  retryMaxDelayMs: number;
 }
 
 type Query = Record<
@@ -26,6 +29,9 @@ export class HttpTransport {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly fetchImplementation: typeof fetch;
+  private readonly maxRetries: number;
+  private readonly retryBaseDelayMs: number;
+  private readonly retryMaxDelayMs: number;
 
   constructor(options: TransportOptions) {
     this.apiKey = options.apiKey;
@@ -33,6 +39,11 @@ export class HttpTransport {
     this.timeoutMs = options.timeoutMs;
     this.fetchImplementation =
       options.fetchImplementation;
+    this.maxRetries = options.maxRetries;
+    this.retryBaseDelayMs =
+      options.retryBaseDelayMs;
+    this.retryMaxDelayMs =
+      options.retryMaxDelayMs;
   }
 
   async getData<T>(
@@ -73,6 +84,49 @@ export class HttpTransport {
   }
 
   private async request(
+    path: string,
+    query: Query,
+    authenticated: boolean,
+    signal?: AbortSignal
+  ): Promise<unknown> {
+    let retryNumber = 0;
+
+    while (true) {
+      try {
+        return await this.requestOnce(
+          path,
+          query,
+          authenticated,
+          signal
+        );
+      } catch (error) {
+        const normalizedError =
+          normalizeTransportError(error);
+
+        const canRetry =
+          retryNumber < this.maxRetries &&
+          isRetryable(normalizedError) &&
+          !signal?.aborted;
+
+        if (!canRetry) {
+          throw normalizedError;
+        }
+
+        const delay = calculateRetryDelay(
+          normalizedError,
+          retryNumber,
+          this.retryBaseDelayMs,
+          this.retryMaxDelayMs
+        );
+
+        retryNumber += 1;
+
+        await waitForRetry(delay, signal);
+      }
+    }
+  }
+
+  private async requestOnce(
     path: string,
     query: Query,
     authenticated: boolean,
@@ -130,12 +184,13 @@ export class HttpTransport {
           signal: controller.signal,
         });
 
-      const body = await parseJson(response);
+      const body = await parseResponse(response);
 
       if (!response.ok) {
         throw createApiError(
           response.status,
-          body
+          body,
+          response.headers
         );
       }
 
@@ -207,12 +262,36 @@ export class HttpTransport {
   }
 }
 
-async function parseJson(
+async function parseResponse(
   response: Response
 ): Promise<unknown> {
+  const text = await response.text();
+
+  if (!text) {
+    if (!response.ok) {
+      return undefined;
+    }
+
+    throw new ToggleFlowError(
+      'ToggleFlow returned an empty response.',
+      {
+        code: 'INVALID_RESPONSE',
+        statusCode: response.status,
+      }
+    );
+  }
+
   try {
-    return await response.json();
+    return JSON.parse(text) as unknown;
   } catch (error) {
+    /*
+     * A non-JSON 5xx response should still become an API
+     * error so it remains eligible for retry.
+     */
+    if (!response.ok) {
+      return undefined;
+    }
+
     throw new ToggleFlowError(
       'ToggleFlow returned a non-JSON response.',
       {
@@ -222,6 +301,181 @@ async function parseJson(
       }
     );
   }
+}
+
+function createApiError(
+  statusCode: number,
+  body: unknown,
+  headers: Headers
+): ToggleFlowError {
+  const message = isApiErrorResponse(body)
+    ? body.error.message
+    : `ToggleFlow returned HTTP ${statusCode}.`;
+
+  let code: ToggleFlowErrorCode = 'API_ERROR';
+
+  if (statusCode === 401 || statusCode === 403) {
+    code = 'UNAUTHORIZED';
+  } else if (statusCode === 404) {
+    code = 'NOT_FOUND';
+  }
+
+  const retryAfterMs = parseRetryAfter(
+    headers.get('Retry-After')
+  );
+
+  return new ToggleFlowError(message, {
+    code,
+    statusCode,
+    ...(retryAfterMs === undefined
+      ? {}
+      : { retryAfterMs }),
+  });
+}
+
+function parseRetryAfter(
+  value: string | null
+): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const seconds = Number(value);
+
+  if (
+    Number.isFinite(seconds) &&
+    seconds >= 0
+  ) {
+    return seconds * 1_000;
+  }
+
+  const retryDate = Date.parse(value);
+
+  if (Number.isNaN(retryDate)) {
+    return undefined;
+  }
+
+  return Math.max(
+    0,
+    retryDate - Date.now()
+  );
+}
+
+function isRetryable(
+  error: ToggleFlowError
+): boolean {
+  if (
+    error.code === 'NETWORK_ERROR' ||
+    error.code === 'TIMEOUT'
+  ) {
+    return true;
+  }
+
+  const status = error.statusCode;
+
+  if (status === undefined) {
+    return false;
+  }
+
+  return (
+    status === 408 ||
+    status === 429 ||
+    status >= 500
+  );
+}
+
+function calculateRetryDelay(
+  error: ToggleFlowError,
+  retryNumber: number,
+  baseDelayMs: number,
+  maxDelayMs: number
+): number {
+  if (error.retryAfterMs !== undefined) {
+    return Math.min(
+      error.retryAfterMs,
+      maxDelayMs
+    );
+  }
+
+  const exponentialDelay =
+    baseDelayMs * 2 ** retryNumber;
+
+  return Math.min(
+    exponentialDelay,
+    maxDelayMs
+  );
+}
+
+function waitForRetry(
+  delayMs: number,
+  signal?: AbortSignal
+): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(
+      new ToggleFlowError(
+        'ToggleFlow request was aborted.',
+        {
+          code: 'REQUEST_ABORTED',
+          cause: signal.reason,
+        }
+      )
+    );
+  }
+
+  if (delayMs <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener(
+        'abort',
+        onAbort
+      );
+
+      reject(
+        new ToggleFlowError(
+          'ToggleFlow request was aborted.',
+          {
+            code: 'REQUEST_ABORTED',
+            cause: signal?.reason,
+          }
+        )
+      );
+    };
+
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener(
+        'abort',
+        onAbort
+      );
+
+      resolve();
+    }, delayMs);
+
+    signal?.addEventListener(
+      'abort',
+      onAbort,
+      { once: true }
+    );
+  });
+}
+
+function normalizeTransportError(
+  error: unknown
+): ToggleFlowError {
+  if (isToggleFlowError(error)) {
+    return error;
+  }
+
+  return new ToggleFlowError(
+    'Unexpected ToggleFlow transport error.',
+    {
+      code: 'NETWORK_ERROR',
+      cause: error,
+    }
+  );
 }
 
 function isSuccessEnvelope<T>(
@@ -246,28 +500,6 @@ function isApiErrorResponse(
     typeof value.error.message === 'string' &&
     typeof value.error.statusCode === 'number'
   );
-}
-
-function createApiError(
-  statusCode: number,
-  body: unknown
-): ToggleFlowError {
-  const message = isApiErrorResponse(body)
-    ? body.error.message
-    : `ToggleFlow returned HTTP ${statusCode}.`;
-
-  let code: ToggleFlowErrorCode = 'API_ERROR';
-
-  if (statusCode === 401 || statusCode === 403) {
-    code = 'UNAUTHORIZED';
-  } else if (statusCode === 404) {
-    code = 'NOT_FOUND';
-  }
-
-  return new ToggleFlowError(message, {
-    code,
-    statusCode,
-  });
 }
 
 function isObject(

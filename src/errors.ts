@@ -12,12 +12,14 @@ export type ToggleFlowErrorCode =
 interface ToggleFlowErrorOptions {
   code: ToggleFlowErrorCode;
   statusCode?: number;
+  retryAfterMs?: number;
   cause?: unknown;
 }
 
 export class ToggleFlowError extends Error {
   readonly code: ToggleFlowErrorCode;
   readonly statusCode: number | undefined;
+  readonly retryAfterMs: number | undefined;
 
   constructor(
     message: string,
@@ -33,6 +35,7 @@ export class ToggleFlowError extends Error {
     this.name = 'ToggleFlowError';
     this.code = options.code;
     this.statusCode = options.statusCode;
+    this.retryAfterMs = options.retryAfterMs;
   }
 }
 
