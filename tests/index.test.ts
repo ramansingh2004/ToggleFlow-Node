@@ -1,0 +1,254 @@
+import {
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
+
+import {
+  ToggleFlow,
+  ToggleFlowError,
+} from '../src/index.js';
+
+function jsonResponse(
+  body: unknown,
+  status = 200
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+}
+
+function createClient(
+  fetchImplementation: typeof fetch,
+  onError?: (error: ToggleFlowError) => void
+): ToggleFlow {
+  return new ToggleFlow({
+    apiKey: 'tf_test_example',
+    baseUrl: 'http://localhost:5000/api/v1',
+    fetchImplementation,
+    ...(onError ? { onError } : {}),
+  });
+}
+
+describe('ToggleFlow', () => {
+  it('retrieves all evaluated flags', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          a_mode: true,
+          new_checkout: false,
+        },
+        message: 'Flags retrieved',
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    const client = createClient(fetchMock);
+
+    const flags = await client.getAllFlags({
+      userId: 'user-123',
+    });
+
+    expect(flags).toEqual({
+      a_mode: true,
+      new_checkout: false,
+    });
+
+    const firstCall = fetchMock.mock.calls[0];
+
+    expect(String(firstCall?.[0])).toBe(
+      'http://localhost:5000/api/v1/sdk/flags?userId=user-123'
+    );
+
+    const headers = new Headers(
+      firstCall?.[1]?.headers
+    );
+
+    expect(
+      headers.get('Authorization')
+    ).toBe('Bearer tf_test_example');
+  });
+
+  it('evaluates one enabled flag', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          key: 'a_mode',
+          name: 'A Mode',
+          enabled: true,
+        },
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    const client = createClient(fetchMock);
+
+    await expect(
+      client.isEnabled(
+        'a_mode',
+        { userId: 'user-123' },
+        false
+      )
+    ).resolves.toBe(true);
+
+    expect(
+      String(fetchMock.mock.calls[0]?.[0])
+    ).toBe(
+      'http://localhost:5000/api/v1/sdk/flags/a_mode?userId=user-123'
+    );
+  });
+
+  it('returns false for a disabled flag', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          key: 'a_mode',
+          name: 'A Mode',
+          enabled: false,
+        },
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    const client = createClient(fetchMock);
+
+    await expect(
+      client.isEnabled(
+        'a_mode',
+        { userId: 'user-123' },
+        true
+      )
+    ).resolves.toBe(false);
+  });
+
+  it('uses the fallback during a network error', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const onError = vi.fn();
+
+    fetchMock.mockRejectedValue(
+      new Error('Connection refused')
+    );
+
+    const client = createClient(
+      fetchMock,
+      onError
+    );
+
+    await expect(
+      client.isEnabled(
+        'a_mode',
+        { userId: 'user-123' },
+        false
+      )
+    ).resolves.toBe(false);
+
+    expect(onError).toHaveBeenCalledOnce();
+
+    expect(
+      onError.mock.calls[0]?.[0]
+    ).toMatchObject({
+      code: 'NETWORK_ERROR',
+    });
+  });
+
+  it('retrieves project information', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          id: 'project-1',
+          name: 'Test Project',
+          slug: 'test-project',
+          isActive: true,
+          enabledFlagCount: 2,
+          createdAt: new Date().toISOString(),
+        },
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    const client = createClient(fetchMock);
+    const project =
+      await client.getProjectInfo();
+
+    expect(project.name).toBe('Test Project');
+    expect(project.enabledFlagCount).toBe(2);
+  });
+
+  it('checks public SDK health without an API key header', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    const client = createClient(fetchMock);
+    const health = await client.healthCheck();
+
+    expect(health.status).toBe('healthy');
+
+    const headers = new Headers(
+      fetchMock.mock.calls[0]?.[1]?.headers
+    );
+
+    expect(
+      headers.has('Authorization')
+    ).toBe(false);
+  });
+
+  it('throws for an empty API key', () => {
+    expect(
+      () =>
+        new ToggleFlow({
+          apiKey: '',
+        })
+    ).toThrow(
+      'A ToggleFlow API key is required.'
+    );
+  });
+
+  it('throws a typed authorization error', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        {
+          success: false,
+          error: {
+            message: 'Invalid API key',
+            statusCode: 401,
+          },
+          timestamp: new Date().toISOString(),
+        },
+        401
+      )
+    );
+
+    const client = createClient(fetchMock);
+
+    await expect(
+      client.getAllFlags()
+    ).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      statusCode: 401,
+    });
+  });
+});
