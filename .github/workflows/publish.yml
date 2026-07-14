@@ -1,4 +1,4 @@
-name: Publish SDK
+name: Publish Package
 
 on:
   release:
@@ -12,24 +12,23 @@ permissions:
 jobs:
   publish:
     name: Publish to npm
-
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
-
         with:
-          node-version: 24
-          cache: npm
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
 
       - name: Install supported npm CLI
         run: npm install --global npm@11
 
-      - name: Show runtime versions
+      - name: Display runtime versions
         run: |
           node --version
           npm --version

@@ -5,11 +5,11 @@
   "author": "Raman Singh",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ramansingh2004/toggleflow-node.git"
+    "url": "git+https://github.com/ramansingh2004/ToggleFlow-Node.git"
   },
-  "homepage": "https://github.com/ramansingh2004/toggleflow-node#readme",
+  "homepage": "https://github.com/ramansingh2004/ToggleFlow-Node#readme",
   "bugs": {
-    "url": "https://github.com/ramansingh2004/toggleflow-node/issues"
+    "url": "https://github.com/ramansingh2004/ToggleFlow-Node/issues"
   },
   "keywords": [
     "toggleflow",
