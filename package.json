@@ -46,9 +46,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:package": "node tests/package-smoke.mjs",
-    "check": "npm run typecheck && npm test && npm run build && npm run test:package",
+    "check": "npm run check:version && npm run typecheck && npm test && npm run build && npm run test:package",
     "pack:check": "npm run check && npm pack --dry-run",
-    "prepublishOnly": "npm run check"
+    "prepublishOnly": "npm run check",
+    "check:version": "node scripts/verify-version.mjs"
   },
   "publishConfig": {
     "access": "public"
