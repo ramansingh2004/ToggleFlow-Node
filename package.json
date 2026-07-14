@@ -1,6 +1,6 @@
 {
   "name": "@toggleflow/node",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Official Node.js SDK for ToggleFlow feature flags",
   "author": "Raman Singh",
   "repository": {
@@ -10,7 +10,7 @@
   "homepage": "https://github.com/ramansingh2004/toggleflow-node#readme",
   "bugs": {
     "url": "https://github.com/ramansingh2004/toggleflow-node/issues"
-},
+  },
   "keywords": [
     "toggleflow",
     "feature-flags",
@@ -40,16 +40,16 @@
     "node": ">=20"
   },
   "scripts": {
-  "dev": "tsup --watch",
-  "build": "tsup",
-  "typecheck": "tsc --noEmit",
-  "test": "vitest run",
-  "test:watch": "vitest",
-  "test:package": "node tests/package-smoke.mjs",
-  "check": "npm run typecheck && npm test && npm run build && npm run test:package",
-  "pack:check": "npm run check && npm pack --dry-run",
-  "prepublishOnly": "npm run check"
-},
+    "dev": "tsup --watch",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:package": "node tests/package-smoke.mjs",
+    "check": "npm run typecheck && npm test && npm run build && npm run test:package",
+    "pack:check": "npm run check && npm pack --dry-run",
+    "prepublishOnly": "npm run check"
+  },
   "publishConfig": {
     "access": "public"
   },

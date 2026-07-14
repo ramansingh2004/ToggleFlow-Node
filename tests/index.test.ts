@@ -8,6 +8,7 @@ import {
 import {
   ToggleFlow,
   ToggleFlowError,
+  TOGGLEFLOW_SDK_VERSION,
 } from '../src/index.js';
 
 function jsonResponse(
@@ -75,6 +76,20 @@ describe('ToggleFlow', () => {
     expect(
       headers.get('Authorization')
     ).toBe('Bearer tf_test_example');
+
+    expect(
+      headers.get('User-Agent')
+    ).toBe(
+      `@toggleflow/node/${TOGGLEFLOW_SDK_VERSION}`
+    );
+
+    expect(
+      headers.get('X-ToggleFlow-SDK')
+    ).toBe('node');
+
+    expect(
+      headers.get('X-ToggleFlow-SDK-Version')
+    ).toBe(TOGGLEFLOW_SDK_VERSION);
   });
 
   it('evaluates one enabled flag', async () => {
@@ -252,4 +267,7 @@ describe('ToggleFlow', () => {
       statusCode: 401,
     });
   });
+  it('exports the current SDK version', () => {
+      expect(TOGGLEFLOW_SDK_VERSION).toBe('0.1.1');
+    });
 });

@@ -22,4 +22,6 @@ export type {
   ToggleFlowOptions,
 } from './types.js';
 
-export const TOGGLEFLOW_SDK_VERSION = '0.1.0';
+export {
+  TOGGLEFLOW_SDK_VERSION,
+} from './version.js';

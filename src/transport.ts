@@ -8,6 +8,9 @@ import type {
   ApiErrorResponse,
   ApiSuccess,
 } from './types.js';
+import {
+  TOGGLEFLOW_SDK_VERSION,
+} from './version.js';
 
 interface TransportOptions {
   apiKey: string;
@@ -167,7 +170,10 @@ export class HttpTransport {
     try {
       const headers = new Headers({
         Accept: 'application/json',
-        'User-Agent': '@toggleflow/node/0.1.0',
+        'User-Agent': `@toggleflow/node/${TOGGLEFLOW_SDK_VERSION}`,
+        'X-ToggleFlow-SDK': 'node',
+        'X-ToggleFlow-SDK-Version':
+        TOGGLEFLOW_SDK_VERSION,
       });
 
       if (authenticated) {

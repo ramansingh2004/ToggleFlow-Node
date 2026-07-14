@@ -17,7 +17,7 @@ assert.equal(
 
 assert.equal(
   esm.TOGGLEFLOW_SDK_VERSION,
-  '0.1.0'
+  '0.1.1'
 );
 
 const require = createRequire(import.meta.url);
@@ -37,7 +37,7 @@ assert.equal(
 
 assert.equal(
   commonJs.TOGGLEFLOW_SDK_VERSION,
-  '0.1.0'
+  '0.1.1'
 );
 
 console.log(
