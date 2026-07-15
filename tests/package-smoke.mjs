@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { readFile } from 'node:fs/promises';
 
 const esm = await import('../dist/index.js');
+
+const packageJson = JSON.parse(
+  await readFile(
+    new URL('../package.json', import.meta.url),
+    'utf8'
+  )
+);
 
 assert.equal(
   typeof esm.ToggleFlow,
@@ -17,7 +25,7 @@ assert.equal(
 
 assert.equal(
   esm.TOGGLEFLOW_SDK_VERSION,
-  '0.1.1'
+  packageJson.version
 );
 
 const require = createRequire(import.meta.url);
@@ -37,7 +45,7 @@ assert.equal(
 
 assert.equal(
   commonJs.TOGGLEFLOW_SDK_VERSION,
-  '0.1.1'
+  packageJson.version
 );
 
 console.log(
