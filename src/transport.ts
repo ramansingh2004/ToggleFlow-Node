@@ -73,6 +73,32 @@ export class HttpTransport {
     return body.data;
   }
 
+  async postData<T>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal
+): Promise<T> {
+  const responseBody = await this.request(
+    path,
+    {},
+    true,
+    signal,
+    'POST',
+    body
+  );
+
+  if (!isSuccessEnvelope<T>(responseBody)) {
+    throw new ToggleFlowError(
+      'ToggleFlow returned an invalid success response.',
+      {
+        code: 'INVALID_RESPONSE',
+      }
+    );
+  }
+
+  return responseBody.data;
+}
+
   async getPublic<T>(
     path: string,
     query: Query = {},
@@ -90,7 +116,9 @@ export class HttpTransport {
     path: string,
     query: Query,
     authenticated: boolean,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    method: 'GET' | 'POST' = 'GET',
+    body?: unknown
   ): Promise<unknown> {
     let retryNumber = 0;
 
@@ -100,7 +128,9 @@ export class HttpTransport {
           path,
           query,
           authenticated,
-          signal
+          signal,
+          method,
+          body
         );
       } catch (error) {
         const normalizedError =
@@ -133,7 +163,9 @@ export class HttpTransport {
     path: string,
     query: Query,
     authenticated: boolean,
-    externalSignal?: AbortSignal
+    externalSignal?: AbortSignal,
+    method: 'GET' | 'POST' = 'GET',
+    body?: unknown
   ): Promise<unknown> {
     const url = this.createUrl(path, query);
     const controller = new AbortController();
@@ -183,24 +215,42 @@ export class HttpTransport {
         );
       }
 
-      const response =
-        await this.fetchImplementation(url, {
-          method: 'GET',
-          headers,
-          signal: controller.signal,
-        });
+      if (body !== undefined) {
+  headers.set(
+    'Content-Type',
+    'application/json'
+  );
+}
 
-      const body = await parseResponse(response);
+const requestInit: RequestInit = {
+  method,
+  headers,
+  signal: controller.signal,
+  ...(body === undefined
+    ? {}
+    : {
+        body: JSON.stringify(body),
+      }),
+};
 
-      if (!response.ok) {
-        throw createApiError(
-          response.status,
-          body,
-          response.headers
-        );
-      }
+const response =
+  await this.fetchImplementation(
+    url,
+    requestInit
+  );
 
-      return body;
+const responseBody =
+  await parseResponse(response);
+
+if (!response.ok) {
+  throw createApiError(
+    response.status,
+    responseBody,
+    response.headers
+  );
+}
+
+return responseBody;
     } catch (error) {
       if (isToggleFlowError(error)) {
         throw error;

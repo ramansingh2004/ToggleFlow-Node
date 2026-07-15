@@ -38,6 +38,24 @@ if (enabled) {
 
 Use the same stable `userId` for the same application user. ToggleFlow uses it for deterministic percentage rollouts.
 
+## Segment targeting
+
+Pass application-user attributes when evaluating flags that use ToggleFlow segments.
+
+```ts
+const enabled = await toggleflow.isEnabled(
+  'regional_checkout',
+  {
+    userId: 'customer-123',
+    attributes: {
+      country: 'IN',
+      plan: 'pro',
+      betaTester: true,
+    },
+  },
+  false
+);
+
 ## Local ToggleFlow server
 
 ```ts

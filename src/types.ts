@@ -4,6 +4,7 @@ export type FlagMap = Record<string, boolean>;
 
 export interface EvaluationContext {
   userId?: string;
+  attributes?: EvaluationAttributes;
   signal?: AbortSignal;
 }
 
@@ -50,7 +51,7 @@ export interface ToggleFlowOptions {
   apiKey: string;
 
   /**
-   * @default https://api.toggleflow.com/api/v1
+   * @default https://toggleflow-api.onrender.com/api/v1
    */
   baseUrl?: string;
 
@@ -108,3 +109,13 @@ retryMaxDelayMs?: number;
 
   onError?: (error: ToggleFlowError) => void;
 }
+
+export type EvaluationAttributeValue =
+  | string
+  | number
+  | boolean;
+
+export type EvaluationAttributes = Record<
+  string,
+  EvaluationAttributeValue
+>;

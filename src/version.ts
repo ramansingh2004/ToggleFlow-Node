@@ -1,1 +1,1 @@
-export const TOGGLEFLOW_SDK_VERSION = '0.1.1';
+export const TOGGLEFLOW_SDK_VERSION = '0.2.0';

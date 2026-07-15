@@ -14,10 +14,12 @@ import type {
   HealthResponse,
   ProjectInfo,
   ToggleFlowOptions,
+  EvaluationAttributes,
+EvaluationAttributeValue,
 } from './types.js';
 
 const DEFAULT_BASE_URL =
-  'https://api.toggleflow.com/api/v1';
+  'https://toggleflow-api.onrender.com/api/v1';
 
 const DEFAULT_TIMEOUT_MS = 3_000;
 const DEFAULT_CACHE_TTL_MS = 30_000;
@@ -149,80 +151,108 @@ if (retryMaxDelayMs < retryBaseDelayMs) {
   }
 
   async getAllFlags(
-    context: EvaluationContext = {}
-  ): Promise<FlagMap> {
-    const userId = validateUserId(
-      context.userId
-    );
+  context: EvaluationContext = {}
+): Promise<FlagMap> {
+  const evaluation =
+    normalizeEvaluationContext(context);
 
-    const cacheKey = createCacheKey(
-      'all-flags',
-      userId ?? 'anonymous'
-    );
+  const cacheKey = createCacheKey(
+    'all-flags',
+    evaluation.userId ?? 'anonymous',
+    evaluation.attributeFingerprint
+  );
 
-    return this.loadCached(
-      cacheKey,
-      context.signal,
-      async () => {
-        const flags =
-          await this.transport.getData<unknown>(
-            '/sdk/flags',
-            { userId },
-            context.signal
-          );
+  return this.loadCached(
+    cacheKey,
+    context.signal,
+    async () => {
+      const flags =
+        evaluation.hasAttributes
+          ? await this.transport.postData<unknown>(
+              '/sdk/flags/evaluate',
+              createEvaluationBody(
+                evaluation.userId,
+                evaluation.attributes
+              ),
+              context.signal
+            )
+          : await this.transport.getData<unknown>(
+              '/sdk/flags',
+              {
+                userId:
+                  evaluation.userId,
+              },
+              context.signal
+            );
 
-        if (!isFlagMap(flags)) {
-          throw new ToggleFlowError(
-            'ToggleFlow returned an invalid flag map.',
-            {
-              code: 'INVALID_RESPONSE',
-            }
-          );
-        }
-
-        return flags;
+      if (!isFlagMap(flags)) {
+        throw new ToggleFlowError(
+          'ToggleFlow returned an invalid flag map.',
+          {
+            code: 'INVALID_RESPONSE',
+          }
+        );
       }
-    );
-  }
+
+      return flags;
+    }
+  );
+}
 
   async getFlag(
-    key: string,
-    context: EvaluationContext = {}
-  ): Promise<FeatureFlag> {
-    const flagKey = validateFlagKey(key);
-    const userId = validateUserId(
-      context.userId
-    );
+  key: string,
+  context: EvaluationContext = {}
+): Promise<FeatureFlag> {
+  const flagKey = validateFlagKey(key);
 
-    const cacheKey = createFlagCacheKey(
-      flagKey,
-      userId
-    );
+  const evaluation =
+    normalizeEvaluationContext(context);
 
-    return this.loadCached(
-      cacheKey,
-      context.signal,
-      async () => {
-        const flag =
-          await this.transport.getData<unknown>(
-            `/sdk/flags/${encodeURIComponent(flagKey)}`,
-            { userId },
-            context.signal
-          );
+  const cacheKey = createFlagCacheKey(
+    flagKey,
+    evaluation.userId,
+    evaluation.attributeFingerprint
+  );
 
-        if (!isFeatureFlag(flag)) {
-          throw new ToggleFlowError(
-            'ToggleFlow returned an invalid flag response.',
-            {
-              code: 'INVALID_RESPONSE',
-            }
-          );
-        }
+  return this.loadCached(
+    cacheKey,
+    context.signal,
+    async () => {
+      const encodedKey =
+        encodeURIComponent(flagKey);
 
-        return flag;
+      const flag =
+        evaluation.hasAttributes
+          ? await this.transport.postData<unknown>(
+              `/sdk/flags/${encodedKey}/evaluate`,
+              createEvaluationBody(
+                evaluation.userId,
+                evaluation.attributes
+              ),
+              context.signal
+            )
+          : await this.transport.getData<unknown>(
+              `/sdk/flags/${encodedKey}`,
+              {
+                userId:
+                  evaluation.userId,
+              },
+              context.signal
+            );
+
+      if (!isFeatureFlag(flag)) {
+        throw new ToggleFlowError(
+          'ToggleFlow returned an invalid flag response.',
+          {
+            code: 'INVALID_RESPONSE',
+          }
+        );
       }
-    );
-  }
+
+      return flag;
+    }
+  );
+}
 
   async isEnabled(
     key: string,
@@ -233,14 +263,14 @@ if (retryMaxDelayMs < retryBaseDelayMs) {
 
     try {
       const flagKey = validateFlagKey(key);
-      const userId = validateUserId(
-        context.userId
-      );
+      const evaluation =
+  normalizeEvaluationContext(context);
 
-      cacheKey = createFlagCacheKey(
-        flagKey,
-        userId
-      );
+cacheKey = createFlagCacheKey(
+  flagKey,
+  evaluation.userId,
+  evaluation.attributeFingerprint
+);
 
       const flag = await this.getFlag(
         flagKey,
@@ -380,12 +410,14 @@ if (retryMaxDelayMs < retryBaseDelayMs) {
 
 function createFlagCacheKey(
   flagKey: string,
-  userId: string | undefined
+  userId: string | undefined,
+  attributeFingerprint = 'no-attributes'
 ): string {
   return createCacheKey(
     'flag',
     flagKey,
-    userId ?? 'anonymous'
+    userId ?? 'anonymous',
+    attributeFingerprint
   );
 }
 
@@ -453,6 +485,170 @@ function validateUserId(
   }
 
   return normalized;
+}
+
+function normalizeEvaluationContext(
+  context: EvaluationContext
+): {
+  userId: string | undefined;
+  attributes: EvaluationAttributes;
+  hasAttributes: boolean;
+  attributeFingerprint: string;
+} {
+  const userId = validateUserId(
+    context.userId
+  );
+
+  const attributes =
+    validateAttributes(
+      context.attributes
+    );
+
+  const attributeFingerprint =
+    createAttributeFingerprint(
+      attributes
+    );
+
+  return {
+    userId,
+    attributes,
+    hasAttributes:
+      Object.keys(attributes).length > 0,
+    attributeFingerprint,
+  };
+}
+
+function validateAttributes(
+  attributes:
+    | EvaluationAttributes
+    | undefined
+): EvaluationAttributes {
+  if (attributes === undefined) {
+    return {};
+  }
+
+  if (!isObject(attributes)) {
+    throw new ToggleFlowError(
+      'attributes must be an object.',
+      {
+        code: 'INVALID_ARGUMENT',
+      }
+    );
+  }
+
+  const entries =
+    Object.entries(attributes);
+
+  if (entries.length > 50) {
+    throw new ToggleFlowError(
+      'attributes can contain at most 50 entries.',
+      {
+        code: 'INVALID_ARGUMENT',
+      }
+    );
+  }
+
+  const normalized: EvaluationAttributes =
+    {};
+
+  for (const [rawKey, value] of entries) {
+    const key = rawKey.trim();
+
+    if (!key || key.length > 100) {
+      throw new ToggleFlowError(
+        'Attribute names must contain between 1 and 100 characters.',
+        {
+          code: 'INVALID_ARGUMENT',
+        }
+      );
+    }
+
+    if (
+      key === '__proto__' ||
+      key === 'prototype' ||
+      key === 'constructor'
+    ) {
+      throw new ToggleFlowError(
+        `Attribute name "${key}" is not allowed.`,
+        {
+          code: 'INVALID_ARGUMENT',
+        }
+      );
+    }
+
+    if (!isEvaluationAttributeValue(value)) {
+      throw new ToggleFlowError(
+        `Attribute "${key}" must be a string, number, or boolean.`,
+        {
+          code: 'INVALID_ARGUMENT',
+        }
+      );
+    }
+
+    if (
+      typeof value === 'string' &&
+      value.length > 500
+    ) {
+      throw new ToggleFlowError(
+        `Attribute "${key}" cannot exceed 500 characters.`,
+        {
+          code: 'INVALID_ARGUMENT',
+        }
+      );
+    }
+
+    if (
+      typeof value === 'number' &&
+      !Number.isFinite(value)
+    ) {
+      throw new ToggleFlowError(
+        `Attribute "${key}" must be a finite number.`,
+        {
+          code: 'INVALID_ARGUMENT',
+        }
+      );
+    }
+
+    normalized[key] = value;
+  }
+
+  return normalized;
+}
+
+function isEvaluationAttributeValue(
+  value: unknown
+): value is EvaluationAttributeValue {
+  return (
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' &&
+      Number.isFinite(value))
+  );
+}
+
+function createAttributeFingerprint(
+  attributes: EvaluationAttributes
+): string {
+  const entries = Object.entries(
+    attributes
+  ).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+
+  return JSON.stringify(entries);
+}
+
+function createEvaluationBody(
+  userId: string | undefined,
+  attributes: EvaluationAttributes
+): {
+  userId?: string;
+  attributes: EvaluationAttributes;
+} {
+  return {
+    ...(userId ? { userId } : {}),
+    attributes,
+  };
 }
 
 function validatePositiveNumber(

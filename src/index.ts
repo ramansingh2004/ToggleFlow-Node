@@ -20,6 +20,8 @@ export type {
   HealthResponse,
   ProjectInfo,
   ToggleFlowOptions,
+  EvaluationAttributes,
+EvaluationAttributeValue,
 } from './types.js';
 
 export {

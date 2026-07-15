@@ -268,6 +268,116 @@ describe('ToggleFlow', () => {
     });
   });
   it('exports the current SDK version', () => {
-      expect(TOGGLEFLOW_SDK_VERSION).toBe('0.1.1');
+      expect(TOGGLEFLOW_SDK_VERSION).toBe('0.2.0');
     });
+
+  it('sends evaluation attributes in a POST request', async () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  fetchMock.mockResolvedValue(
+    jsonResponse({
+      success: true,
+      data: {
+        key: 'a_mode',
+        name: 'A Mode',
+        enabled: true,
+      },
+      timestamp: new Date().toISOString(),
+    })
+  );
+
+  const client = createClient(fetchMock);
+
+  await client.getFlag('a_mode', {
+    userId: 'user-123',
+    attributes: {
+      country: 'IN',
+      plan: 'pro',
+      betaTester: true,
+    },
+  });
+
+  const firstCall = fetchMock.mock.calls[0];
+
+  expect(String(firstCall?.[0])).toBe(
+    'http://localhost:5000/api/v1/sdk/flags/a_mode/evaluate'
+  );
+
+  expect(firstCall?.[1]?.method).toBe(
+    'POST'
+  );
+
+  expect(
+    JSON.parse(
+      String(firstCall?.[1]?.body)
+    )
+  ).toEqual({
+    userId: 'user-123',
+    attributes: {
+      country: 'IN',
+      plan: 'pro',
+      betaTester: true,
+    },
+  });
+});
+
+it('does not share cached evaluations across attributes', async () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  fetchMock
+    .mockResolvedValueOnce(
+      jsonResponse({
+        success: true,
+        data: {
+          key: 'a_mode',
+          name: 'A Mode',
+          enabled: true,
+        },
+        timestamp:
+          new Date().toISOString(),
+      })
+    )
+    .mockResolvedValueOnce(
+      jsonResponse({
+        success: true,
+        data: {
+          key: 'a_mode',
+          name: 'A Mode',
+          enabled: false,
+        },
+        timestamp:
+          new Date().toISOString(),
+      })
+    );
+
+  const client = createClient(fetchMock);
+
+  const indiaResult =
+    await client.isEnabled(
+      'a_mode',
+      {
+        userId: 'user-123',
+        attributes: {
+          country: 'IN',
+        },
+      },
+      false
+    );
+
+  const usaResult =
+    await client.isEnabled(
+      'a_mode',
+      {
+        userId: 'user-123',
+        attributes: {
+          country: 'US',
+        },
+      },
+      false
+    );
+
+  expect(indiaResult).toBe(true);
+  expect(usaResult).toBe(false);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
 });
