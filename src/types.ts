@@ -28,6 +28,33 @@ export interface HealthResponse {
   timestamp: string;
 }
 
+export interface ExperimentVariantAssignment {
+  id: string;
+  name: string;
+  config: Record<string, unknown> | null;
+}
+
+export interface ExperimentAssignment {
+  experimentId: string;
+  experimentName: string;
+  flagKey: string;
+  conversionMetric: string;
+  userId: string;
+  variant: ExperimentVariantAssignment;
+}
+
+export interface ExperimentConversion {
+  recorded: true;
+  alreadyConverted: boolean;
+  experimentId: string;
+  variantId: string;
+  conversionMetric: string;
+}
+
+export interface ExperimentRequestOptions {
+  signal?: AbortSignal;
+}
+
 export interface ApiSuccess<T> {
   success: true;
   data: T;

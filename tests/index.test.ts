@@ -268,7 +268,7 @@ describe('ToggleFlow', () => {
     });
   });
   it('exports the current SDK version', () => {
-      expect(TOGGLEFLOW_SDK_VERSION).toBe('0.2.0');
+      expect(TOGGLEFLOW_SDK_VERSION).toBe('0.3.0');
     });
 
   it('sends evaluation attributes in a POST request', async () => {
@@ -380,4 +380,147 @@ it('does not share cached evaluations across attributes', async () => {
   expect(usaResult).toBe(false);
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
+});
+
+describe('ToggleFlow experiments', () => {
+  it('assigns a user to an experiment variant', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          experimentId: 'experiment-1',
+          experimentName: 'Homepage CTA',
+          flagKey: 'new_homepage',
+          conversionMetric: 'signup',
+          userId: 'user-123',
+          variant: {
+            id: 'variant-b',
+            name: 'Treatment',
+            config: {
+              buttonText: 'Start free',
+            },
+          },
+        },
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    const client = createClient(fetchMock);
+    const assignment =
+      await client.assignExperiment(
+        'experiment-1',
+        'user-123'
+      );
+
+    expect(assignment.variant.name).toBe(
+      'Treatment'
+    );
+    expect(assignment.variant.config).toEqual({
+      buttonText: 'Start free',
+    });
+
+    const requestCall = fetchMock.mock.calls[0];
+
+    expect(String(requestCall?.[0])).toBe(
+      'http://localhost:5000/api/v1/sdk/experiments/experiment-1/assign'
+    );
+    expect(requestCall?.[1]?.method).toBe('POST');
+    expect(
+      JSON.parse(String(requestCall?.[1]?.body))
+    ).toEqual({
+      userId: 'user-123',
+    });
+  });
+
+  it('records an experiment conversion', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          recorded: true,
+          alreadyConverted: false,
+          experimentId: 'experiment-1',
+          variantId: 'variant-b',
+          conversionMetric: 'signup',
+        },
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    const client = createClient(fetchMock);
+    const conversion =
+      await client.trackConversion(
+        'experiment-1',
+        'user-123'
+      );
+
+    expect(conversion).toMatchObject({
+      recorded: true,
+      alreadyConverted: false,
+      variantId: 'variant-b',
+    });
+
+    const requestCall = fetchMock.mock.calls[0];
+
+    expect(String(requestCall?.[0])).toBe(
+      'http://localhost:5000/api/v1/sdk/experiments/experiment-1/convert'
+    );
+    expect(
+      JSON.parse(String(requestCall?.[1]?.body))
+    ).toEqual({
+      userId: 'user-123',
+    });
+  });
+
+  it('rejects empty experiment identifiers before making a request', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const client = createClient(fetchMock);
+
+    await expect(
+      client.assignExperiment('', 'user-123')
+    ).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT',
+    });
+
+    await expect(
+      client.trackConversion(
+        'experiment-1',
+        '   '
+      )
+    ).rejects.toMatchObject({
+      code: 'INVALID_ARGUMENT',
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed experiment responses', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          experimentId: 'experiment-1',
+          variant: null,
+        },
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    const client = createClient(fetchMock);
+
+    await expect(
+      client.assignExperiment(
+        'experiment-1',
+        'user-123'
+      )
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+    });
+  });
 });

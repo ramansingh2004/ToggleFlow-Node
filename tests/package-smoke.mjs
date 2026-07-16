@@ -24,6 +24,18 @@ assert.equal(
 );
 
 assert.equal(
+  typeof esm.ToggleFlow.prototype.assignExperiment,
+  'function',
+  'ESM build must expose assignExperiment'
+);
+
+assert.equal(
+  typeof esm.ToggleFlow.prototype.trackConversion,
+  'function',
+  'ESM build must expose trackConversion'
+);
+
+assert.equal(
   esm.TOGGLEFLOW_SDK_VERSION,
   packageJson.version
 );
@@ -41,6 +53,18 @@ assert.equal(
   typeof commonJs.ToggleFlowError,
   'function',
   'CommonJS build must export ToggleFlowError'
+);
+
+assert.equal(
+  typeof commonJs.ToggleFlow.prototype.assignExperiment,
+  'function',
+  'CommonJS build must expose assignExperiment'
+);
+
+assert.equal(
+  typeof commonJs.ToggleFlow.prototype.trackConversion,
+  'function',
+  'CommonJS build must expose trackConversion'
 );
 
 assert.equal(

@@ -1,6 +1,6 @@
 # @toggleflow/node
 
-Official Node.js SDK for ToggleFlow feature flags.
+Official Node.js SDK for ToggleFlow feature flags, segment targeting, gradual rollouts, and experiments.
 
 ## Requirements
 
@@ -55,6 +55,98 @@ const enabled = await toggleflow.isEnabled(
   },
   false
 );
+```
+
+Segment rules are configured in ToggleFlow. The SDK sends this evaluation context to ToggleFlow and returns the evaluated flag state.
+
+## Experiments
+
+### 1. Configure the experiment in ToggleFlow
+
+In the ToggleFlow dashboard:
+
+1. Create or select a feature flag.
+2. Enable the flag.
+3. Create an experiment for that flag.
+4. Add at least two variants whose weights total 100%.
+5. Set the conversion metric, such as `signup` or `purchase`.
+6. Start the experiment.
+7. Copy the experiment ID.
+
+Only one experiment can run on a flag at a time.
+
+### 2. Assign an application user
+
+Call `assignExperiment()` on your server before rendering the experimental experience:
+
+```ts
+const assignment = await toggleflow.assignExperiment(
+  'your-experiment-id',
+  'customer-123'
+);
+
+if (assignment.variant.name === 'Treatment') {
+  // Render the treatment experience.
+} else {
+  // Render the control experience.
+}
+```
+
+The response also includes variant configuration:
+
+```ts
+const buttonText =
+  assignment.variant.config?.buttonText;
+```
+
+Variant configuration values are typed as `unknown`. Validate or narrow a value before using it in application logic.
+
+ToggleFlow deterministically assigns the user and persists one exposure. Calling `assignExperiment()` again with the same experiment ID and user ID returns the same variant.
+
+### 3. Record the conversion
+
+Call `trackConversion()` only after that assigned user completes the experiment's configured conversion event:
+
+```ts
+await toggleflow.trackConversion(
+  'your-experiment-id',
+  'customer-123'
+);
+```
+
+Conversion tracking is idempotent. Repeating the call does not count the same user twice.
+
+Assignment must happen before conversion tracking. ToggleFlow rejects a conversion if no assignment exists for that experiment and user.
+
+### 4. Read the results
+
+Open the experiment in ToggleFlow to inspect:
+
+- participants and conversions per variant;
+- conversion rates;
+- 95% confidence intervals;
+- the current winning variant;
+- statistical significance.
+
+Use the same stable application-user ID for assignment and conversion. Do not use random IDs on every request.
+
+### Cancel an experiment request
+
+```ts
+const controller = new AbortController();
+
+const assignment = toggleflow.assignExperiment(
+  'your-experiment-id',
+  'customer-123',
+  {
+    signal: controller.signal,
+  }
+);
+
+controller.abort();
+
+await assignment;
+```
 
 ## Local ToggleFlow server
 

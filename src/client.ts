@@ -9,6 +9,9 @@ import { HttpTransport } from './transport.js';
 
 import type {
   EvaluationContext,
+  ExperimentAssignment,
+  ExperimentConversion,
+  ExperimentRequestOptions,
   FeatureFlag,
   FlagMap,
   HealthResponse,
@@ -352,6 +355,79 @@ cacheKey = createFlagCacheKey(
   }
 
   /**
+   * Deterministically assigns an application user to a running experiment.
+   * Repeating this call for the same experiment and user returns the same
+   * persisted variant.
+   */
+  async assignExperiment(
+    experimentId: string,
+    userId: string,
+    options: ExperimentRequestOptions = {}
+  ): Promise<ExperimentAssignment> {
+    const normalizedExperimentId =
+      validateRequiredString(
+        experimentId,
+        'experimentId'
+      );
+    const normalizedUserId =
+      validateRequiredUserId(userId);
+
+    const assignment =
+      await this.transport.postData<unknown>(
+        `/sdk/experiments/${encodeURIComponent(normalizedExperimentId)}/assign`,
+        { userId: normalizedUserId },
+        options.signal
+      );
+
+    if (!isExperimentAssignment(assignment)) {
+      throw new ToggleFlowError(
+        'ToggleFlow returned an invalid experiment assignment.',
+        {
+          code: 'INVALID_RESPONSE',
+        }
+      );
+    }
+
+    return assignment;
+  }
+
+  /**
+   * Records the configured conversion for an already assigned user.
+   * The backend treats repeated calls as idempotent.
+   */
+  async trackConversion(
+    experimentId: string,
+    userId: string,
+    options: ExperimentRequestOptions = {}
+  ): Promise<ExperimentConversion> {
+    const normalizedExperimentId =
+      validateRequiredString(
+        experimentId,
+        'experimentId'
+      );
+    const normalizedUserId =
+      validateRequiredUserId(userId);
+
+    const conversion =
+      await this.transport.postData<unknown>(
+        `/sdk/experiments/${encodeURIComponent(normalizedExperimentId)}/convert`,
+        { userId: normalizedUserId },
+        options.signal
+      );
+
+    if (!isExperimentConversion(conversion)) {
+      throw new ToggleFlowError(
+        'ToggleFlow returned an invalid experiment conversion response.',
+        {
+          code: 'INVALID_RESPONSE',
+        }
+      );
+    }
+
+    return conversion;
+  }
+
+  /**
    * Clears cached evaluations and project information.
    */
   clearCache(): void {
@@ -478,6 +554,50 @@ function validateUserId(
   if (!normalized) {
     throw new ToggleFlowError(
       'userId must be a non-empty string when provided.',
+      {
+        code: 'INVALID_ARGUMENT',
+      }
+    );
+  }
+
+  if (normalized.length > 200) {
+    throw new ToggleFlowError(
+      'userId cannot exceed 200 characters.',
+      {
+        code: 'INVALID_ARGUMENT',
+      }
+    );
+  }
+
+  return normalized;
+}
+
+function validateRequiredUserId(
+  userId: string
+): string {
+  const normalized = validateUserId(userId);
+
+  if (!normalized) {
+    throw new ToggleFlowError(
+      'userId must be a non-empty string.',
+      {
+        code: 'INVALID_ARGUMENT',
+      }
+    );
+  }
+
+  return normalized;
+}
+
+function validateRequiredString(
+  value: string,
+  name: string
+): string {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    throw new ToggleFlowError(
+      `${name} must be a non-empty string.`,
       {
         code: 'INVALID_ARGUMENT',
       }
@@ -796,5 +916,41 @@ function isObject(
     typeof value === 'object' &&
     value !== null &&
     !Array.isArray(value)
+  );
+}
+
+function isExperimentAssignment(
+  value: unknown
+): value is ExperimentAssignment {
+  if (
+    !isObject(value) ||
+    typeof value.experimentId !== 'string' ||
+    typeof value.experimentName !== 'string' ||
+    typeof value.flagKey !== 'string' ||
+    typeof value.conversionMetric !== 'string' ||
+    typeof value.userId !== 'string' ||
+    !isObject(value.variant) ||
+    typeof value.variant.id !== 'string' ||
+    typeof value.variant.name !== 'string'
+  ) {
+    return false;
+  }
+
+  return (
+    value.variant.config === null ||
+    isObject(value.variant.config)
+  );
+}
+
+function isExperimentConversion(
+  value: unknown
+): value is ExperimentConversion {
+  return (
+    isObject(value) &&
+    value.recorded === true &&
+    typeof value.alreadyConverted === 'boolean' &&
+    typeof value.experimentId === 'string' &&
+    typeof value.variantId === 'string' &&
+    typeof value.conversionMetric === 'string'
   );
 }
