@@ -13,6 +13,8 @@ import type {
   ExperimentConversion,
   ExperimentRequestOptions,
   FeatureFlag,
+  FlagConversion,
+  FlagConversionOptions,
   FlagMap,
   HealthResponse,
   ProjectInfo,
@@ -352,6 +354,47 @@ cacheKey = createFlagCacheKey(
     }
 
     return health;
+  }
+
+  /**
+   * Records a conversion attributed to a feature flag evaluation.
+   * Pass a stable eventId when retrying the same business event.
+   */
+  async trackFlagConversion(
+    flagKey: string,
+    userId: string,
+    conversionType: string,
+    options: FlagConversionOptions = {}
+  ): Promise<FlagConversion> {
+    const normalizedFlagKey = validateRequiredString(
+      flagKey,
+      'flagKey'
+    );
+    const normalizedUserId = validateRequiredUserId(userId);
+    const normalizedConversionType = validateRequiredString(
+      conversionType,
+      'conversionType'
+    );
+
+    const conversion = await this.transport.postData<unknown>(
+      `/sdk/flags/${encodeURIComponent(normalizedFlagKey)}/conversions`,
+      {
+        userId: normalizedUserId,
+        conversionType: normalizedConversionType,
+        ...(options.eventId ? { eventId: options.eventId } : {}),
+        ...(options.metadata ? { metadata: options.metadata } : {}),
+      },
+      options.signal
+    );
+
+    if (!isFlagConversion(conversion)) {
+      throw new ToggleFlowError(
+        'ToggleFlow returned an invalid flag conversion response.',
+        { code: 'INVALID_RESPONSE' }
+      );
+    }
+
+    return conversion;
   }
 
   /**
@@ -952,5 +995,19 @@ function isExperimentConversion(
     typeof value.experimentId === 'string' &&
     typeof value.variantId === 'string' &&
     typeof value.conversionMetric === 'string'
+  );
+}
+
+function isFlagConversion(
+  value: unknown
+): value is FlagConversion {
+  if (!isObject(value)) return false;
+
+  return (
+    typeof value.recorded === 'boolean' &&
+    typeof value.duplicate === 'boolean' &&
+    typeof value.flagId === 'string' &&
+    typeof value.conversionType === 'string' &&
+    typeof value.timestamp === 'string'
   );
 }

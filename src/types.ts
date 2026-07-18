@@ -55,6 +55,20 @@ export interface ExperimentRequestOptions {
   signal?: AbortSignal;
 }
 
+export interface FlagConversion {
+  recorded: boolean;
+  duplicate: boolean;
+  flagId: string;
+  conversionType: string;
+  timestamp: string;
+}
+
+export interface FlagConversionOptions {
+  eventId?: string;
+  metadata?: Record<string, unknown>;
+  signal?: AbortSignal;
+}
+
 export interface ApiSuccess<T> {
   success: true;
   data: T;

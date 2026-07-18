@@ -268,7 +268,7 @@ describe('ToggleFlow', () => {
     });
   });
   it('exports the current SDK version', () => {
-      expect(TOGGLEFLOW_SDK_VERSION).toBe('0.3.0');
+      expect(TOGGLEFLOW_SDK_VERSION).toBe('0.4.0');
     });
 
   it('sends evaluation attributes in a POST request', async () => {
@@ -521,6 +521,54 @@ describe('ToggleFlow experiments', () => {
       )
     ).rejects.toMatchObject({
       code: 'INVALID_RESPONSE',
+    });
+  });
+});
+
+describe('ToggleFlow flag analytics', () => {
+  it('records an idempotent flag conversion', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        success: true,
+        data: {
+          recorded: true,
+          duplicate: false,
+          flagId: 'flag-1',
+          conversionType: 'signup',
+          timestamp: new Date().toISOString(),
+        },
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    const client = createClient(fetchMock);
+    const conversion = await client.trackFlagConversion(
+      'new_checkout',
+      'user-123',
+      'signup',
+      {
+        eventId: 'signup-456',
+        metadata: { plan: 'pro' },
+      }
+    );
+
+    expect(conversion).toMatchObject({
+      recorded: true,
+      duplicate: false,
+      conversionType: 'signup',
+    });
+
+    const requestCall = fetchMock.mock.calls[0];
+    expect(String(requestCall?.[0])).toBe(
+      'http://localhost:5000/api/v1/sdk/flags/new_checkout/conversions'
+    );
+    expect(JSON.parse(String(requestCall?.[1]?.body))).toEqual({
+      userId: 'user-123',
+      conversionType: 'signup',
+      eventId: 'signup-456',
+      metadata: { plan: 'pro' },
     });
   });
 });

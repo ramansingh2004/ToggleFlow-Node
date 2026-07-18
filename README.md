@@ -59,6 +59,33 @@ const enabled = await toggleflow.isEnabled(
 
 Segment rules are configured in ToggleFlow. The SDK sends this evaluation context to ToggleFlow and returns the evaluated flag state.
 
+## Flag analytics and conversions
+
+Every flag evaluation automatically increments its real impression totals.
+ToggleFlow stores only an HMAC digest of the stable `userId`, which supports
+exact unique-user counts without retaining the raw identifier.
+
+Record a conversion after the user completes the action attributed to a flag:
+
+```ts
+await toggleflow.trackFlagConversion(
+  'new_checkout',
+  'customer-123',
+  'purchase',
+  {
+    // Use your business event ID so network retries cannot double-count it.
+    eventId: 'order-789',
+    metadata: {
+      plan: 'pro',
+    },
+  }
+);
+```
+
+Without `eventId`, ToggleFlow records at most one conversion for the same
+flag, user, conversion type, and UTC day. Keep the API key on the server; do
+not call this method directly from browser code.
+
 ## Experiments
 
 ### 1. Configure the experiment in ToggleFlow

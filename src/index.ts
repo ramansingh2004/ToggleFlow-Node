@@ -20,6 +20,8 @@ export type {
   ExperimentRequestOptions,
   ExperimentVariantAssignment,
   FeatureFlag,
+  FlagConversion,
+  FlagConversionOptions,
   FlagMap,
   HealthResponse,
   ProjectInfo,

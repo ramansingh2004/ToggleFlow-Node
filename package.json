@@ -1,6 +1,6 @@
 {
   "name": "@toggleflow/node",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Official Node.js SDK for ToggleFlow feature flags and experimentation",
   "author": "Raman Singh",
   "repository": {
