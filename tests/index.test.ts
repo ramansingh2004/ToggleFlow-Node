@@ -268,7 +268,7 @@ describe('ToggleFlow', () => {
     });
   });
   it('exports the current SDK version', () => {
-      expect(TOGGLEFLOW_SDK_VERSION).toBe('0.4.0');
+      expect(TOGGLEFLOW_SDK_VERSION).toBe('0.5.0');
     });
 
   it('sends evaluation attributes in a POST request', async () => {

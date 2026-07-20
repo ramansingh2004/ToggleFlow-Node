@@ -1,6 +1,12 @@
 import type { ToggleFlowError } from './errors.js';
 
-export type FlagMap = Record<string, boolean>;
+export type FlagMap<
+  TFlagKey extends string = string,
+> = Partial<Record<TFlagKey, boolean>>;
+
+export type FlagSnapshot<
+  TFlagKey extends string = string,
+> = Readonly<FlagMap<TFlagKey>>;
 
 export interface EvaluationContext {
   userId?: string;
@@ -88,7 +94,31 @@ export interface ApiErrorResponse {
   timestamp: string;
 }
 
-export interface ToggleFlowOptions {
+export interface FlagUpdate<
+  TFlagKey extends string = string,
+> {
+  previous: FlagSnapshot<TFlagKey>;
+  current: FlagSnapshot<TFlagKey>;
+  changedKeys: readonly TFlagKey[];
+  updatedAt: Date;
+  isInitial: boolean;
+}
+
+export interface PollingOptions {
+  /**
+   * Time between completed refreshes.
+   *
+   * @default 30000
+   */
+  intervalMs?: number;
+
+  /** Evaluation context used for every background refresh. */
+  context?: Omit<EvaluationContext, 'signal'>;
+}
+
+export interface ToggleFlowOptions<
+  TFlagKey extends string = string,
+> {
   apiKey: string;
 
   /**
@@ -149,6 +179,15 @@ retryMaxDelayMs?: number;
   fetchImplementation?: typeof globalThis.fetch;
 
   onError?: (error: ToggleFlowError) => void;
+
+  /**
+   * Values used when an evaluation fails and no usable cached or
+   * successfully refreshed snapshot value exists.
+   */
+  fallbacks?: Partial<Record<TFlagKey, boolean>>;
+
+  /** Called after the initial snapshot and whenever snapshot values change. */
+  onUpdate?: (update: FlagUpdate<TFlagKey>) => void;
 }
 
 export type EvaluationAttributeValue =

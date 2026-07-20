@@ -36,6 +36,18 @@ assert.equal(
 );
 
 assert.equal(
+  typeof esm.ToggleFlow.prototype.startPolling,
+  'function',
+  'ESM build must expose startPolling'
+);
+
+assert.equal(
+  typeof esm.ToggleFlow.prototype.getSnapshot,
+  'function',
+  'ESM build must expose getSnapshot'
+);
+
+assert.equal(
   esm.TOGGLEFLOW_SDK_VERSION,
   packageJson.version
 );
@@ -65,6 +77,18 @@ assert.equal(
   typeof commonJs.ToggleFlow.prototype.trackConversion,
   'function',
   'CommonJS build must expose trackConversion'
+);
+
+assert.equal(
+  typeof commonJs.ToggleFlow.prototype.startPolling,
+  'function',
+  'CommonJS build must expose startPolling'
+);
+
+assert.equal(
+  typeof commonJs.ToggleFlow.prototype.getSnapshot,
+  'function',
+  'CommonJS build must expose getSnapshot'
 );
 
 assert.equal(

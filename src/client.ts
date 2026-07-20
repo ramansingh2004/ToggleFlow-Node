@@ -16,7 +16,10 @@ import type {
   FlagConversion,
   FlagConversionOptions,
   FlagMap,
+  FlagSnapshot,
+  FlagUpdate,
   HealthResponse,
+  PollingOptions,
   ProjectInfo,
   ToggleFlowOptions,
   EvaluationAttributes,
@@ -33,8 +36,18 @@ const DEFAULT_MAX_CACHE_ENTRIES = 1_000;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_BASE_DELAY_MS = 100;
 const DEFAULT_RETRY_MAX_DELAY_MS = 5_000;
+const DEFAULT_POLL_INTERVAL_MS = 30_000;
 
-export class ToggleFlow {
+interface NormalizedEvaluationContext {
+  userId: string | undefined;
+  attributes: EvaluationAttributes;
+  hasAttributes: boolean;
+  attributeFingerprint: string;
+}
+
+export class ToggleFlow<
+  TFlagKey extends string = string,
+> {
   private readonly transport: HttpTransport;
   private readonly cache: MemoryCache;
 
@@ -42,10 +55,27 @@ export class ToggleFlow {
   private readonly staleTtlMs: number;
 
   private readonly onError:
-    | ToggleFlowOptions['onError']
+    | ToggleFlowOptions<TFlagKey>['onError']
     | undefined;
 
-  constructor(options: ToggleFlowOptions) {
+  private readonly onUpdate:
+    | ToggleFlowOptions<TFlagKey>['onUpdate']
+    | undefined;
+
+  private readonly fallbacks: Readonly<
+    Partial<Record<TFlagKey, boolean>>
+  >;
+
+  private snapshot: FlagSnapshot<TFlagKey> =
+    Object.freeze({});
+
+  private hasSnapshot = false;
+  private pollingTimer:
+    | ReturnType<typeof setTimeout>
+    | undefined;
+  private pollingGeneration = 0;
+
+  constructor(options: ToggleFlowOptions<TFlagKey>) {
     if (!options || typeof options !== 'object') {
       throw new ToggleFlowError(
         'ToggleFlow configuration is required.',
@@ -110,6 +140,10 @@ export class ToggleFlow {
     }
 
     this.onError = options.onError;
+    this.onUpdate = options.onUpdate;
+    this.fallbacks = Object.freeze({
+      ...(options.fallbacks ?? {}),
+    });
     this.cache = new MemoryCache(
       maxCacheEntries
     );
@@ -157,7 +191,7 @@ if (retryMaxDelayMs < retryBaseDelayMs) {
 
   async getAllFlags(
   context: EvaluationContext = {}
-): Promise<FlagMap> {
+): Promise<FlagMap<TFlagKey>> {
   const evaluation =
     normalizeEvaluationContext(context);
 
@@ -170,42 +204,16 @@ if (retryMaxDelayMs < retryBaseDelayMs) {
   return this.loadCached(
     cacheKey,
     context.signal,
-    async () => {
-      const flags =
-        evaluation.hasAttributes
-          ? await this.transport.postData<unknown>(
-              '/sdk/flags/evaluate',
-              createEvaluationBody(
-                evaluation.userId,
-                evaluation.attributes
-              ),
-              context.signal
-            )
-          : await this.transport.getData<unknown>(
-              '/sdk/flags',
-              {
-                userId:
-                  evaluation.userId,
-              },
-              context.signal
-            );
-
-      if (!isFlagMap(flags)) {
-        throw new ToggleFlowError(
-          'ToggleFlow returned an invalid flag map.',
-          {
-            code: 'INVALID_RESPONSE',
-          }
-        );
-      }
-
-      return flags;
-    }
+    () =>
+      this.requestAllFlags(
+        evaluation,
+        context.signal
+      )
   );
 }
 
   async getFlag(
-  key: string,
+  key: TFlagKey,
   context: EvaluationContext = {}
 ): Promise<FeatureFlag> {
   const flagKey = validateFlagKey(key);
@@ -260,9 +268,9 @@ if (retryMaxDelayMs < retryBaseDelayMs) {
 }
 
   async isEnabled(
-    key: string,
+    key: TFlagKey,
     context: EvaluationContext = {},
-    fallback = false
+    fallback?: boolean
   ): Promise<boolean> {
     let cacheKey: string | undefined;
 
@@ -300,7 +308,10 @@ cacheKey = createFlagCacheKey(
         }
       }
 
-      return fallback;
+      return this.resolveFallback(
+        key,
+        fallback
+      );
     }
   }
 
@@ -361,7 +372,7 @@ cacheKey = createFlagCacheKey(
    * Pass a stable eventId when retrying the same business event.
    */
   async trackFlagConversion(
-    flagKey: string,
+    flagKey: TFlagKey,
     userId: string,
     conversionType: string,
     options: FlagConversionOptions = {}
@@ -471,10 +482,223 @@ cacheKey = createFlagCacheKey(
   }
 
   /**
+   * Fetches all evaluated flags without using the request cache and
+   * atomically replaces the local snapshot.
+   */
+  async refreshSnapshot(
+    context: EvaluationContext = {}
+  ): Promise<FlagSnapshot<TFlagKey>> {
+    const evaluation =
+      normalizeEvaluationContext(context);
+
+    const flags = await this.requestAllFlags(
+      evaluation,
+      context.signal
+    );
+
+    return this.replaceSnapshot(flags);
+  }
+
+  /** Returns a defensive, immutable copy of the current snapshot. */
+  getSnapshot(): FlagSnapshot<TFlagKey> {
+    return Object.freeze({ ...this.snapshot });
+  }
+
+  /** True after at least one successful snapshot refresh. */
+  hasSnapshotValue(): boolean {
+    return this.hasSnapshot;
+  }
+
+  /**
+   * Evaluates synchronously from the last successful snapshot.
+   * Before the first successful refresh, configured or per-call
+   * fallbacks are used.
+   */
+  isEnabledFromSnapshot(
+    key: TFlagKey,
+    fallback?: boolean
+  ): boolean {
+    const flagKey = validateFlagKey(key);
+
+    if (this.hasSnapshot) {
+      return this.snapshot[flagKey] ?? false;
+    }
+
+    return this.resolveFallback(
+      flagKey,
+      fallback
+    );
+  }
+
+  /**
+   * Performs an initial refresh and starts non-overlapping background
+   * refreshes. Calling this again replaces the existing polling loop.
+   */
+  async startPolling(
+    options: PollingOptions = {}
+  ): Promise<void> {
+    const intervalMs = validatePositiveNumber(
+      options.intervalMs ??
+        DEFAULT_POLL_INTERVAL_MS,
+      'intervalMs'
+    );
+
+    this.stopPolling();
+    const generation = this.pollingGeneration;
+    const context = options.context ?? {};
+
+    await this.refreshSnapshotSafely(context);
+
+    if (generation !== this.pollingGeneration) {
+      return;
+    }
+
+    this.schedulePoll(
+      generation,
+      intervalMs,
+      context
+    );
+  }
+
+  /** Stops background polling while preserving the last snapshot. */
+  stopPolling(): void {
+    this.pollingGeneration += 1;
+
+    if (this.pollingTimer !== undefined) {
+      clearTimeout(this.pollingTimer);
+      this.pollingTimer = undefined;
+    }
+  }
+
+  /** Releases SDK background resources. Safe to call repeatedly. */
+  close(): void {
+    this.stopPolling();
+  }
+
+  /**
    * Clears cached evaluations and project information.
    */
   clearCache(): void {
     this.cache.clear();
+  }
+
+  private async requestAllFlags(
+    evaluation: NormalizedEvaluationContext,
+    signal?: AbortSignal
+  ): Promise<FlagMap<TFlagKey>> {
+    const flags =
+      evaluation.hasAttributes
+        ? await this.transport.postData<unknown>(
+            '/sdk/flags/evaluate',
+            createEvaluationBody(
+              evaluation.userId,
+              evaluation.attributes
+            ),
+            signal
+          )
+        : await this.transport.getData<unknown>(
+            '/sdk/flags',
+            {
+              userId: evaluation.userId,
+            },
+            signal
+          );
+
+    if (!isFlagMap(flags)) {
+      throw new ToggleFlowError(
+        'ToggleFlow returned an invalid flag map.',
+        {
+          code: 'INVALID_RESPONSE',
+        }
+      );
+    }
+
+    return flags as FlagMap<TFlagKey>;
+  }
+
+  private replaceSnapshot(
+    flags: FlagMap<TFlagKey>
+  ): FlagSnapshot<TFlagKey> {
+    const previous = this.snapshot;
+    const isInitial = !this.hasSnapshot;
+    const current = Object.freeze({ ...flags });
+    const changedKeys = findChangedKeys<
+      TFlagKey
+    >(previous, current);
+
+    this.snapshot = current;
+    this.hasSnapshot = true;
+
+    if (isInitial || changedKeys.length > 0) {
+      this.reportUpdate({
+        previous,
+        current: this.getSnapshot(),
+        changedKeys,
+        updatedAt: new Date(),
+        isInitial,
+      });
+    }
+
+    return this.getSnapshot();
+  }
+
+  private resolveFallback(
+    key: TFlagKey,
+    fallback: boolean | undefined
+  ): boolean {
+    if (fallback !== undefined) {
+      return fallback;
+    }
+
+    return this.fallbacks[key] ?? false;
+  }
+
+  private async refreshSnapshotSafely(
+    context: Omit<EvaluationContext, 'signal'>
+  ): Promise<void> {
+    try {
+      await this.refreshSnapshot(context);
+    } catch (error) {
+      this.reportError(normalizeError(error));
+    }
+  }
+
+  private schedulePoll(
+    generation: number,
+    intervalMs: number,
+    context: Omit<EvaluationContext, 'signal'>
+  ): void {
+    const timer = setTimeout(async () => {
+      if (generation !== this.pollingGeneration) {
+        return;
+      }
+
+      this.pollingTimer = undefined;
+      await this.refreshSnapshotSafely(context);
+
+      if (generation === this.pollingGeneration) {
+        this.schedulePoll(
+          generation,
+          intervalMs,
+          context
+        );
+      }
+    }, intervalMs);
+
+    timer.unref?.();
+    this.pollingTimer = timer;
+  }
+
+  private reportUpdate(
+    update: FlagUpdate<TFlagKey>
+  ): void {
+    if (!this.onUpdate) return;
+
+    try {
+      this.onUpdate(update);
+    } catch {
+      // Update reporting cannot break snapshot refreshes.
+    }
   }
 
   private async loadCached<T>(
@@ -570,7 +794,9 @@ function normalizeBaseUrl(value: string): string {
   return trimmed.replace(/\/+$/, '');
 }
 
-function validateFlagKey(key: string): string {
+function validateFlagKey<TFlagKey extends string>(
+  key: TFlagKey
+): TFlagKey {
   const normalized = key?.trim();
 
   if (!normalized) {
@@ -582,7 +808,7 @@ function validateFlagKey(key: string): string {
     );
   }
 
-  return normalized;
+  return normalized as TFlagKey;
 }
 
 function validateUserId(
@@ -652,12 +878,7 @@ function validateRequiredString(
 
 function normalizeEvaluationContext(
   context: EvaluationContext
-): {
-  userId: string | undefined;
-  attributes: EvaluationAttributes;
-  hasAttributes: boolean;
-  attributeFingerprint: string;
-} {
+): NormalizedEvaluationContext {
   const userId = validateUserId(
     context.userId
   );
@@ -679,6 +900,24 @@ function normalizeEvaluationContext(
       Object.keys(attributes).length > 0,
     attributeFingerprint,
   };
+}
+
+function findChangedKeys<
+  TFlagKey extends string,
+>(
+  previous: FlagSnapshot<TFlagKey>,
+  current: FlagSnapshot<TFlagKey>
+): TFlagKey[] {
+  const keys = new Set([
+    ...Object.keys(previous),
+    ...Object.keys(current),
+  ] as TFlagKey[]);
+
+  return [...keys].filter(
+    (key) =>
+      (previous[key] ?? false) !==
+      (current[key] ?? false)
+  );
 }
 
 function validateAttributes(

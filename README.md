@@ -36,6 +36,48 @@ if (enabled) {
 }
 ```
 
+## Typed flag keys
+
+Provide a string union to catch misspelled flag keys during TypeScript builds:
+
+```ts
+type AppFlag =
+  | 'new_checkout'
+  | 'weekly_summary'
+  | 'login_button';
+
+const toggleflow = new ToggleFlow<AppFlag>({
+  apiKey: process.env.TOGGLEFLOW_API_KEY!,
+});
+
+await toggleflow.isEnabled('new_checkout'); // valid
+// await toggleflow.isEnabled('new_chekout'); // TypeScript error
+```
+
+The generic is optional. JavaScript projects and existing TypeScript projects
+can continue using `new ToggleFlow(...)` with arbitrary string keys.
+
+## Graceful fallback values
+
+Configure safe defaults once for temporary API failures and startup before a
+local snapshot has been loaded:
+
+```ts
+type AppFlag = 'checkout' | 'maintenance_banner';
+
+const toggleflow = new ToggleFlow<AppFlag>({
+  apiKey: process.env.TOGGLEFLOW_API_KEY!,
+  fallbacks: {
+    checkout: false,
+    maintenance_banner: true,
+  },
+});
+```
+
+A fallback passed directly to `isEnabled()` or
+`isEnabledFromSnapshot()` has priority over the configured value. If neither
+is provided, the SDK safely returns `false`.
+
 Use the same stable `userId` for the same application user. ToggleFlow uses it for deterministic percentage rollouts.
 
 ## Segment targeting
@@ -289,6 +331,69 @@ Clear the cache manually:
 toggleflow.clearCache();
 ```
 
+## Local snapshots and background polling
+
+Long-running Node.js processes can keep an evaluated flag snapshot in memory:
+
+```ts
+type AppFlag = 'new_checkout' | 'weekly_summary';
+
+const toggleflow = new ToggleFlow<AppFlag>({
+  apiKey: process.env.TOGGLEFLOW_API_KEY!,
+  fallbacks: {
+    new_checkout: false,
+    weekly_summary: false,
+  },
+  onUpdate({ changedKeys, current, isInitial }) {
+    console.log('ToggleFlow snapshot updated', {
+      changedKeys,
+      current,
+      isInitial,
+    });
+  },
+});
+
+await toggleflow.startPolling({
+  intervalMs: 30_000,
+  context: {
+    userId: 'server-default',
+  },
+});
+
+const enabled = toggleflow.isEnabledFromSnapshot(
+  'new_checkout'
+);
+```
+
+`startPolling()` performs one immediate refresh. Later refreshes are scheduled
+after the previous request completes, so requests never overlap. A failed
+refresh preserves the last successful snapshot and is reported through
+`onError`.
+
+Read or refresh the snapshot manually:
+
+```ts
+await toggleflow.refreshSnapshot({
+  userId: 'server-default',
+});
+
+const snapshot = toggleflow.getSnapshot();
+```
+
+The returned object is an immutable defensive copy. After a successful bulk
+refresh, a key omitted by the API is treated as disabled. Configured fallbacks
+are only used before the first successful snapshot.
+
+Stop polling during graceful shutdown:
+
+```ts
+toggleflow.close();
+```
+
+Polling is intended for a shared evaluation context in long-running services.
+Use `isEnabled()` for user-specific segment rules, percentage rollouts, and
+serverless requests.
+
 ## Retries
 
 The SDK retries transient failures:
@@ -366,7 +471,7 @@ controller.abort();
 await promise;
 ```
 
-## Next.js security
+## Next.js integration
 
 Only use the SDK on the server.
 
@@ -393,6 +498,94 @@ export const toggleflow = new ToggleFlow({
 ```
 
 Creating one shared instance is important because the in-memory cache belongs to that SDK instance.
+
+Use it in a Server Component, Route Handler, or Server Action:
+
+```ts
+import { toggleflow } from '@/lib/toggleflow';
+
+export default async function Page() {
+  const enabled = await toggleflow.isEnabled(
+    'new_checkout',
+    { userId: 'stable-user-id' },
+    false
+  );
+
+  return enabled ? <NewCheckout /> : <CurrentCheckout />;
+}
+```
+
+Do not start background polling in Vercel or another serverless runtime.
+Instances can be frozen or destroyed between requests. Use asynchronous
+evaluation and the SDK request cache instead. Polling is appropriate when
+Next.js runs as one long-lived Node.js server that you operate yourself.
+
+## Express middleware example
+
+Start polling once during application startup and expose the shared client to
+request handlers:
+
+```ts
+import express from 'express';
+import { ToggleFlow } from '@toggleflow/node';
+
+type AppFlag = 'new_checkout' | 'weekly_summary';
+
+const toggleflow = new ToggleFlow<AppFlag>({
+  apiKey: process.env.TOGGLEFLOW_API_KEY!,
+  fallbacks: {
+    new_checkout: false,
+    weekly_summary: false,
+  },
+});
+
+await toggleflow.startPolling({ intervalMs: 30_000 });
+
+const app = express();
+
+app.use((request, response, next) => {
+  response.locals.flags = toggleflow.getSnapshot();
+  next();
+});
+
+app.get('/checkout', (request, response) => {
+  const enabled = toggleflow.isEnabledFromSnapshot(
+    'new_checkout'
+  );
+
+  response.json({ experience: enabled ? 'new' : 'current' });
+});
+
+const server = app.listen(3000);
+
+function shutdown() {
+  toggleflow.close();
+  server.close();
+}
+
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
+```
+
+For flags depending on the signed-in user, evaluate inside the request instead:
+
+```ts
+const enabled = await toggleflow.isEnabled(
+  'new_checkout',
+  {
+    userId: request.user.id,
+    attributes: {
+      plan: request.user.plan,
+    },
+  },
+  false
+);
+```
+
+## Telemetry roadmap
+
+OpenTelemetry-compatible evaluation hooks are planned for a later release.
+This release does not add an OpenTelemetry runtime dependency.
 
 ## CommonJS
 
